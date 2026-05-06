@@ -753,6 +753,9 @@ def logout():
 
 @app.get("/api/auth/me")
 def get_me(request: Request):
+    # If no passwords configured yet — return setup mode (allow access to set passwords)
+    if not database.any_user_has_password():
+        return {"id": 0, "name": "מנהל", "role": "admin", "email": "", "setup_mode": True}
     token = _get_token(request)
     payload = _decode_token(token) if token else None
     if not payload:
