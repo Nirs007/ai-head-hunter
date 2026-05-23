@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0',
+    allowedHosts: ['icy-shelf-shaky.ngrok-free.dev'],
     proxy: {
       '/api': 'http://localhost:8000'
     }

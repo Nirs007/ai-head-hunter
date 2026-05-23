@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Login from './Login.jsx'
+import ResetPassword from './ResetPassword.jsx'
 import ScanPanel from './components/ScanPanel.jsx'
 import JobForm from './components/JobForm.jsx'
 import ImportPanel from './components/ImportPanel.jsx'
@@ -295,6 +296,10 @@ export default function App() {
   }
 
   // Auth gate
+  const resetToken = new URLSearchParams(window.location.search).get('token')
+  if (window.location.pathname === '/reset-password' && resetToken) {
+    return <ResetPassword token={resetToken} />
+  }
   if (authUser === undefined) return null  // still checking
   if (authUser === null) return <Login onLogin={setAuthUser} />
 

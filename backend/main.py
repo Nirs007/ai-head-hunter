@@ -9,10 +9,11 @@ import json
 import logging
 import os
 import re
+import secrets
 import smtplib
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
@@ -23,7 +24,7 @@ from fastapi.responses import StreamingResponse, FileResponse, Response, JSONRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt_lib
 from datetime import timedelta
 
 import time
@@ -94,7 +95,15 @@ database.init_db()
 _SECRET = os.environ.get("JWT_SECRET", "aih-secret-key-change-in-production")
 _ALGO   = "HS256"
 _DAYS   = 7
-_pwd    = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def _hash_password(password: str) -> str:
+    return _bcrypt_lib.hashpw(password.encode(), _bcrypt_lib.gensalt()).decode()
+
+def _verify_password(password: str, hashed: str) -> bool:
+    try:
+        return _bcrypt_lib.checkpw(password.encode(), hashed.encode())
+    except Exception:
+        return False
 
 
 def _make_token(user_id: int, email: str) -> str:
@@ -125,7 +134,8 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/") or request.method == "OPTIONS":
         return await call_next(request)
     # Public endpoints
-    if path == "/api/auth/login":
+    if path in ("/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password") \
+            or path.startswith("/api/auth/validate-reset-token/"):
         return await call_next(request)
     # If no user has a password yet — allow all (initial setup)
     if not database.any_user_has_password():
@@ -733,7 +743,7 @@ def login(req: LoginRequest):
     user = database.get_user_by_email(req.email)
     if not user or not user.get("password_hash"):
         raise HTTPException(status_code=401, detail="שם משתמש או סיסמה שגויים")
-    if not _pwd.verify(req.password, user["password_hash"]):
+    if not _verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="שם משתמש או סיסמה שגויים")
     token = _make_token(user["id"], user["email"])
     resp = JSONResponse({"ok": True, "user": {
@@ -773,9 +783,91 @@ def set_password(user_id: int, req: SetPasswordRequest):
     user = database.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="משתמש לא נמצא")
-    database.set_user_password(user_id, _pwd.hash(req.password))
+    database.set_user_password(user_id, _hash_password(req.password))
     return {"ok": True}
 
+
+# ─── Forgot / Reset password ───────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+def _send_reset_email(to_email: str, to_name: str, reset_url: str):
+    smtp_host = database.get_setting("smtp_host", "smtp.gmail.com")
+    smtp_port = int(database.get_setting("smtp_port", "587"))
+    smtp_user = database.get_setting("smtp_user", "")
+    smtp_pass = database.get_setting("smtp_pass", "")
+    from_name = database.get_setting("smtp_from_name", "AI Head Hunter")
+    if not smtp_user or not smtp_pass:
+        raise HTTPException(status_code=500, detail="הגדרות מייל לא מוגדרות במערכת")
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "איפוס סיסמה — AI Head Hunter"
+    msg["From"] = f"{from_name} <{smtp_user}>"
+    msg["To"] = to_email
+    html = f"""
+    <div dir="rtl" style="font-family:sans-serif;max-width:480px;margin:auto">
+      <h2>שלום {to_name},</h2>
+      <p>קיבלנו בקשה לאיפוס הסיסמה שלך.</p>
+      <p style="margin:24px 0">
+        <a href="{reset_url}"
+           style="background:#2563eb;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:16px">
+          אפס סיסמה
+        </a>
+      </p>
+      <p style="color:#666;font-size:13px">הקישור תקף לשעה אחת.<br>
+      אם לא ביקשת לאפס את הסיסמה, התעלם ממייל זה.</p>
+    </div>"""
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as srv:
+        srv.ehlo(); srv.starttls(); srv.login(smtp_user, smtp_pass)
+        srv.sendmail(smtp_user, [to_email], msg.as_string())
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(req: ForgotPasswordRequest, request: Request):
+    user = database.get_user_by_email(req.email.strip().lower())
+    if not user:
+        return {"ok": True}  # don't reveal whether email exists
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+    database.create_reset_token(user["id"], token, expires_at)
+    base_url = str(request.base_url).rstrip("/")
+    reset_url = f"{base_url}/reset-password?token={token}"
+    _send_reset_email(user["email"], user["name"] or user["email"], reset_url)
+    return {"ok": True}
+
+
+@app.get("/api/auth/validate-reset-token/{token}")
+def validate_reset_token(token: str):
+    rec = database.get_reset_token(token)
+    if not rec:
+        raise HTTPException(status_code=400, detail="הקישור לא תקין")
+    if rec["used"]:
+        raise HTTPException(status_code=400, detail="הקישור כבר שומש")
+    if datetime.fromisoformat(rec["expires_at"]) < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="הקישור פג תוקף")
+    return {"ok": True}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password_by_token(req: ResetPasswordRequest):
+    rec = database.get_reset_token(req.token)
+    if not rec:
+        raise HTTPException(status_code=400, detail="הקישור לא תקין")
+    if rec["used"]:
+        raise HTTPException(status_code=400, detail="הקישור כבר שומש")
+    if datetime.fromisoformat(rec["expires_at"]) < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="הקישור פג תוקף")
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="הסיסמה חייבת להכיל לפחות 6 תווים")
+    database.set_user_password(rec["user_id"], _hash_password(req.new_password))
+    database.mark_reset_token_used(rec["id"])
+    return {"ok": True}
 
 
 # ─── App settings ─────────────────────────────────────────────────────────────

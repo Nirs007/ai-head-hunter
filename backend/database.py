@@ -162,6 +162,14 @@ def init_db():
         "ALTER TABLE candidates ADD COLUMN availability TEXT",
         "ALTER TABLE candidates ADD COLUMN call_notes TEXT",
         "ALTER TABLE users ADD COLUMN password_hash TEXT",
+        """CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            expires_at TEXT NOT NULL,
+            used INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )""",
     ]
     for sql in migrations:
         try:
@@ -184,12 +192,27 @@ def init_db():
         now = datetime.utcnow().isoformat()
         c.execute(
             "INSERT INTO users (name, role, email, phone, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("עופרי", "רקרוטר", "", "", now),
+            ("עופרי", "רקרוטר", "ofri@connectech.co.il", "", now),
         )
         c.execute(
             "INSERT INTO users (name, role, email, phone, created_at) VALUES (?, ?, ?, ?, ?)",
             ("משתמש", "מנהל", "", "", now),
         )
+
+    # Ensure admin user nirs@connectech.co.il always exists with password
+    _ADMIN_EMAIL = "nirs@connectech.co.il"
+    _ADMIN_HASH  = "$2b$12$BcBJNKjLZDtAM//Lq/3QP.OwseHRUxItvshfdcJDlOud73Q4eNL0q"
+    existing_admin = c.execute(
+        "SELECT id, password_hash FROM users WHERE LOWER(email)=?", (_ADMIN_EMAIL,)
+    ).fetchone()
+    if existing_admin is None:
+        now2 = datetime.utcnow().isoformat()
+        c.execute(
+            "INSERT INTO users (name, role, email, phone, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            ("ניר שניצר", "מנהל", _ADMIN_EMAIL, "", _ADMIN_HASH, now2),
+        )
+    elif not existing_admin[1]:
+        c.execute("UPDATE users SET password_hash=? WHERE LOWER(email)=?", (_ADMIN_HASH, _ADMIN_EMAIL))
 
     # One-time cleanup: remove duplicate match_history rows, keep latest per (candidate_id, job_id)
     c.execute("""
@@ -981,6 +1004,40 @@ def any_user_has_password() -> bool:
     row = conn.execute("SELECT 1 FROM users WHERE password_hash IS NOT NULL AND password_hash != ''").fetchone()
     conn.close()
     return row is not None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# ─── Password reset tokens ────────────────────────────────────────────────────
+
+def create_reset_token(user_id: int, token: str, expires_at: str):
+    conn = get_conn()
+    now = datetime.utcnow().isoformat()
+    conn.execute(
+        "INSERT INTO password_reset_tokens (user_id, token, expires_at, used, created_at) VALUES (?,?,?,0,?)",
+        (user_id, token, expires_at, now)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_reset_token(token: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM password_reset_tokens WHERE token = ?", (token,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def mark_reset_token_used(token_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE password_reset_tokens SET used = 1 WHERE id = ?", (token_id,))
+    conn.commit()
+    conn.close()
 
 
 # ─── App settings (key-value store) ──────────────────────────────────────────
