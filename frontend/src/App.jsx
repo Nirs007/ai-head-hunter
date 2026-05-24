@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Login from './Login.jsx'
 import ResetPassword from './ResetPassword.jsx'
 import ScanPanel from './components/ScanPanel.jsx'
@@ -296,10 +296,13 @@ export default function App() {
   }
 
   // Auth gate
-  const resetToken = new URLSearchParams(window.location.search).get('token')
-  if (window.location.pathname === '/reset-password' && resetToken) {
-    return <ResetPassword token={resetToken} />
-  }
+  const resetToken = useMemo(
+    () => window.location.pathname === '/reset-password'
+      ? new URLSearchParams(window.location.search).get('token')
+      : null,
+    [],
+  )
+  if (resetToken) return <ResetPassword token={resetToken} />
   if (authUser === undefined) return null  // still checking
   if (authUser === null) return <Login onLogin={setAuthUser} />
 

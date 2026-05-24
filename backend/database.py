@@ -206,10 +206,9 @@ def init_db():
         "SELECT id, password_hash FROM users WHERE LOWER(email)=?", (_ADMIN_EMAIL,)
     ).fetchone()
     if existing_admin is None:
-        now2 = datetime.utcnow().isoformat()
         c.execute(
             "INSERT INTO users (name, role, email, phone, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("ניר שניצר", "מנהל", _ADMIN_EMAIL, "", _ADMIN_HASH, now2),
+            ("ניר שניצר", "מנהל", _ADMIN_EMAIL, "", _ADMIN_HASH, datetime.utcnow().isoformat()),
         )
     elif not existing_admin[1]:
         c.execute("UPDATE users SET password_hash=? WHERE LOWER(email)=?", (_ADMIN_HASH, _ADMIN_EMAIL))
@@ -1006,13 +1005,6 @@ def any_user_has_password() -> bool:
     return row is not None
 
 
-def get_user_by_id(user_id: int) -> dict | None:
-    conn = get_conn()
-    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
 # ─── Password reset tokens ────────────────────────────────────────────────────
 
 def create_reset_token(user_id: int, token: str, expires_at: str):
@@ -1028,7 +1020,11 @@ def create_reset_token(user_id: int, token: str, expires_at: str):
 
 def get_reset_token(token: str) -> dict | None:
     conn = get_conn()
-    row = conn.execute("SELECT * FROM password_reset_tokens WHERE token = ?", (token,)).fetchone()
+    now = datetime.utcnow().isoformat()
+    row = conn.execute(
+        "SELECT * FROM password_reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?",
+        (token, now),
+    ).fetchone()
     conn.close()
     return dict(row) if row else None
 

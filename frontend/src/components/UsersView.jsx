@@ -21,11 +21,11 @@ function UserRow({ user, onUpdated, onDeleted }) {
   const [newPw,     setNewPw]     = useState('')
   const [pwSaving,  setPwSaving]  = useState(false)
   const [pwMsg,     setPwMsg]     = useState(null)
-  const [showPw,    setShowPw]    = useState(false)
-  const PW_PLACEHOLDER = '••••••••'
+  const [showPw,          setShowPw]          = useState(false)
+  const [isPwPlaceholder, setIsPwPlaceholder] = useState(false)
 
   const savePassword = async () => {
-    if (newPw === PW_PLACEHOLDER) { setSetPwMode(false); return }
+    if (isPwPlaceholder) { setSetPwMode(false); return }
     if (newPw.length < 6) { setPwMsg({ ok: false, text: 'לפחות 6 תווים' }); return }
     setPwSaving(true); setPwMsg(null)
     const r = await fetch(`/api/users/${user.id}/set-password`, {
@@ -42,7 +42,8 @@ function UserRow({ user, onUpdated, onDeleted }) {
     setSetPwMode(s => !s)
     setPwMsg(null)
     setShowPw(false)
-    setNewPw(user.password_hash ? PW_PLACEHOLDER : '')
+    setNewPw('')
+    setIsPwPlaceholder(!!user.password_hash)
   }
 
   const save = async () => {
@@ -112,9 +113,9 @@ function UserRow({ user, onUpdated, onDeleted }) {
           <div style={{ display: 'flex', gap: '8px' }}>
             <div style={{ position: 'relative', flex: 1 }}>
               <input
-                value={newPw}
-                onChange={e => setNewPw(e.target.value)}
-                onFocus={() => { if (newPw === PW_PLACEHOLDER) setNewPw('') }}
+                value={isPwPlaceholder ? '••••••••' : newPw}
+                onChange={e => { setIsPwPlaceholder(false); setNewPw(e.target.value) }}
+                onFocus={() => setIsPwPlaceholder(false)}
                 onKeyDown={e => e.key === 'Enter' && savePassword()}
                 type={showPw ? 'text' : 'password'}
                 placeholder="סיסמה חדשה (לפחות 6 תווים)"
@@ -125,10 +126,10 @@ function UserRow({ user, onUpdated, onDeleted }) {
                 {showPw ? '🙈' : '👁'}
               </button>
             </div>
-            <button onClick={savePassword} disabled={pwSaving || newPw.length < 6} style={{ padding: '8px 16px', background: '#166534', border: '1px solid #4ade80', borderRadius: '7px', color: '#4ade80', fontSize: '12px', fontWeight: 700, cursor: 'pointer', opacity: pwSaving || newPw.length < 6 ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+            <button onClick={savePassword} disabled={pwSaving || (!isPwPlaceholder && newPw.length < 6)} style={{ padding: '8px 16px', background: '#166534', border: '1px solid #4ade80', borderRadius: '7px', color: '#4ade80', fontSize: '12px', fontWeight: 700, cursor: 'pointer', opacity: pwSaving || (!isPwPlaceholder && newPw.length < 6) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
               {pwSaving ? '...' : '✓ שמור'}
             </button>
-            <button onClick={() => { setSetPwMode(false); setNewPw(''); setPwMsg(null); setShowPw(false) }} style={{ padding: '8px 12px', background: 'none', border: '1px solid #334155', borderRadius: '7px', color: '#64748b', fontSize: '12px', cursor: 'pointer' }}>ביטול</button>
+            <button onClick={() => { setSetPwMode(false); setNewPw(''); setPwMsg(null); setShowPw(false); setIsPwPlaceholder(false) }} style={{ padding: '8px 12px', background: 'none', border: '1px solid #334155', borderRadius: '7px', color: '#64748b', fontSize: '12px', cursor: 'pointer' }}>ביטול</button>
           </div>
           {pwMsg && (
             <div style={{ fontSize: '12px', color: pwMsg.ok ? '#4ade80' : '#f87171' }}>{pwMsg.text}</div>
