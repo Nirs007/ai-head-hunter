@@ -3,6 +3,7 @@ backend/venv/
 backend/__pycache__/
 backend/*.pyc
 backend/*.db
+!backend/candidates.db
 backend/app.log
 backend/.env
 

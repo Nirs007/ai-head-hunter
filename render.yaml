@@ -3,11 +3,20 @@ services:
     name: ai-head-hunter
     env: python
     region: frankfurt
-    plan: free
+    plan: starter
     buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
-    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: >-
+      cd backend &&
+      ([ -f /data/candidates.db ] || cp candidates.db /data/candidates.db) &&
+      uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      - key: CV_MATCHER_DATA_DIR
+        value: /data
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
